@@ -16,7 +16,7 @@ Pillow>=9.0.0          # Image manipulation library (resizing, format conversion
 cryptography>=38.0.0   # Encryption for secure configuration storage
 
 # GUI (usually included with Python)
-tkinter              # Standard Python GUI toolkit
+# tkinter              # Standard Python GUI toolkit
 
 # =============================================================================
 # Development Dependencies (commented out - uncomment if needed)

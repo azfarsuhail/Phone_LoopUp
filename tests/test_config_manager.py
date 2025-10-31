@@ -7,7 +7,7 @@ import sys
 from unittest.mock import Mock, patch, MagicMock
 import json
 import base64
-
+from modules.path_utils import get_config_path
 # Add the parent directory to the path to import modules
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -68,7 +68,7 @@ class TestConfigManager(unittest.TestCase):
     def test_encryption_key_creation(self):
         """Test encryption key creation and loading."""
         # Key should be created during initialization
-        key_file = self.test_config_file.parent / ".encryption_key"
+        key_file = get_config_path() / ".encryption_key"
         self.assertTrue(key_file.exists())
         
         # Key should be valid Fernet key
@@ -284,12 +284,14 @@ class TestConfigManager(unittest.TestCase):
         errors = self.config_manager.validate_config()
         self.assertIn("API key is required", errors)
     
+
     def test_validate_config_short_api_key(self):
         """Test validation with short API key."""
         self.config_manager.set_api_key('short')  # Too short
-        
+
         errors = self.config_manager.validate_config()
-        self.assertIn("API key appears to be invalid", errors)
+        # Update to match the exact error message
+        self.assertIn("API key appears to be invalid (too short)", errors)
     
     def test_validate_config_invalid_delay(self):
         """Test validation with invalid request delay."""
@@ -366,33 +368,30 @@ class TestConfigManager(unittest.TestCase):
         
         # Non-sensitive fields should be unchanged
         self.assertEqual(summary['request_delay'], 2.0)
-    
+        
     def test_export_config(self):
         """Test exporting configuration."""
         export_file = Path(tempfile.mktemp(suffix=".json"))
-        
-        # Set some values
+
+        # Set some values including API key
+        self.config_manager.set_api_key("test_api_key_12345")
         self.config_manager.set('request_delay', 2.5)
         self.config_manager.set('max_image_width', 150)
-        
+
         success = self.config_manager.export_config(export_file)
-        
+
         self.assertTrue(success)
         self.assertTrue(export_file.exists())
-        
+
         # Verify exported content
         with open(export_file, 'r', encoding='utf-8') as f:
             exported_data = json.load(f)
-        
+
         self.assertEqual(exported_data['request_delay'], 2.5)
         self.assertEqual(exported_data['max_image_width'], 150)
-        # Sensitive data should be masked
+        # Sensitive data should be masked - check the actual format
         self.assertTrue(exported_data['api_key'].startswith('***'))
-        
-        # Clean up
-        if export_file.exists():
-            export_file.unlink()
-    
+
     def test_import_config(self):
         """Test importing configuration."""
         # Create export file first

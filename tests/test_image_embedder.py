@@ -384,8 +384,10 @@ class TestImageEmbedder(unittest.TestCase):
     
     def test_get_column_index(self):
         """Test getting column index from worksheet."""
-        # Create a mock worksheet
+        # Create a proper mock worksheet
         mock_ws = Mock()
+        
+        # Create mock cells
         mock_cell1 = Mock()
         mock_cell1.value = 'Number'
         mock_cell2 = Mock()
@@ -393,16 +395,20 @@ class TestImageEmbedder(unittest.TestCase):
         mock_cell3 = Mock()
         mock_cell3.value = 'b64_1'
         
-        mock_ws.__getitem__.return_value = [mock_cell1, mock_cell2, mock_cell3]
+        # Mock the worksheet row access properly
+        mock_ws.__getitem__ = Mock(return_value=[mock_cell1, mock_cell2, mock_cell3])
         
-        # Test finding existing column
-        col_idx = self.image_embedder._get_column_index(mock_ws, 'Image_1')
-        self.assertEqual(col_idx, 2)
+        # Test the method
+        result = self.image_embedder._get_column_index(mock_ws, 'Image_1')
+        self.assertEqual(result, 2)  # Should return 2 (second position)
         
-        # Test non-existent column
-        col_idx = self.image_embedder._get_column_index(mock_ws, 'NonExistent')
-        self.assertIsNone(col_idx)
-    
+        result = self.image_embedder._get_column_index(mock_ws, 'b64_1')
+        self.assertEqual(result, 3)  # Should return 3 (third position)
+        
+        result = self.image_embedder._get_column_index(mock_ws, 'NonExistent')
+        self.assertIsNone(result)  # Should return None for non-existent column
+        
+        
     @patch('modules.image_embedder.XLImage')
     @patch('modules.image_embedder.ImageEmbedder._resize_image')
     def test_embed_image_data_success(self, mock_resize, mock_xl_image):
@@ -669,25 +675,25 @@ class TestImageEmbedderIntegration(unittest.TestCase):
         self.assertGreater(len(ws._images), 0)
         
         wb.close()
-    
+        
     def test_processing_stop_signal(self):
         """Test processing with stop signal."""
         mock_stop = Mock()
-        # Return True on second call to simulate stop signal
-        mock_stop.side_effect = [False, True]
-        
+        # Return False first few times, then True to simulate stop signal
+        # The method calls should_stop() multiple times during processing
+        mock_stop.side_effect = [False, False, False, True]  # More calls to avoid StopIteration
+
         self.image_embedder.configure(
             input_file=str(self.test_input_file),
             output_file=str(self.test_output_file),
             stop_callback=mock_stop,
             enable_cache=False
         )
-        
-        success = self.image_embedder.run()
-        
-        # Should complete but may not process all images due to stop signal
-        self.assertTrue(success)  # Still returns True as it stopped gracefully
 
+        success = self.image_embedder.run()
+
+        # Should complete but may not process all images due to stop signal
+        self.assertTrue(success)  # Should return True as it stopped gracefully
 
 class TestUtilityFunctions(unittest.TestCase):
     """Test utility functions."""

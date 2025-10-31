@@ -22,12 +22,13 @@ class UsageTracker:
         Args:
             storage_file: Name of the JSON file for storing usage data
         """
+        # Setup module-specific logger FIRST
+        self.logger = self._setup_logger()
+        
+        # Then setup everything else
         self.storage_file = get_data_path() / storage_file
         self.current_month = datetime.now().strftime("%Y-%m")
         self.usage_data = self._load_usage_data()
-        
-        # Setup module-specific logger
-        self.logger = self._setup_logger()
         
         # Initialize current month if not exists
         self._ensure_current_month()
@@ -36,7 +37,11 @@ class UsageTracker:
         """Setup module-specific logger."""
         logger = logging.getLogger(__name__)
         if not logger.handlers:
-            log_file = get_data_path() / "usage_tracker.log"
+            # Create logs directory if it doesn't exist
+            log_dir = get_data_path() / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            
+            log_file = log_dir / "usage_tracker.log"
             handler = logging.FileHandler(log_file, encoding='utf-8')
             formatter = logging.Formatter(
                 '%(asctime)s - %(name)s - %(levelname)s - %(message)s'

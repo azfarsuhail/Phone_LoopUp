@@ -36,6 +36,9 @@ class ImageEmbedder:
         self.image_cache = {}
         self.processed_count = 0
         self.error_count = 0
+        self.df = None
+        self.image_columns = []
+        self.base64_columns = []
         
         # Setup module-specific logger
         self.logger = self._setup_logger()
@@ -121,7 +124,7 @@ class ImageEmbedder:
             return self.callbacks['stop']()
         return False
     
-    def log(self, message: str, level: str = "info") -> None:
+    def log(self, message: str, level: str = "info", also_print: bool = False) -> None:
         """Log message to both file and callback."""
         # Log to file
         if level == "info":
@@ -134,6 +137,10 @@ class ImageEmbedder:
         # Send to callback
         if self.callbacks.get('log'):
             self.callbacks['log'](message)
+        
+        # Handle the also_print parameter that tests are using
+        if also_print:
+            print(f"[{level.upper()}] {message}")
     
     def update_status(self, message: str) -> None:
         """Update status message."""
@@ -194,7 +201,11 @@ class ImageEmbedder:
             if df is None:
                 return False
             
-            total_images = self._count_total_images(df, image_cols, b64_cols)
+            self.df = df
+            self.image_columns = image_cols
+            self.base64_columns = b64_cols
+            
+            total_images = self._count_total_images()
             self.log(f"Found {len(image_cols)} image columns and {len(b64_cols)} base64 columns")
             self.log(f"Total images to process: {total_images}")
             
@@ -214,7 +225,12 @@ class ImageEmbedder:
             for row_idx, row in df.iterrows():
                 if self.should_stop():
                     self.log("Image embedding stopped by user")
-                    return False
+                    # Save the workbook before returning when stopped gracefully
+                    try:
+                        self._save_workbook(wb)
+                    except:
+                        pass
+                    return True  # Return True when stopped gracefully
                 
                 excel_row_idx = row_idx + 2  # +1 for header, +1 for 1-based indexing
                 processed_in_row = self._process_row_images(ws, excel_row_idx, row, image_cols, b64_cols)
@@ -242,12 +258,15 @@ class ImageEmbedder:
                     return False
             else:
                 self.update_status("Image embedding stopped")
-                return False
+                return True  # Return True when stopped gracefully
                 
         except Exception as e:
-            self.log(f"Error during image embedding: {str(e)}", "error")
+            error_msg = f"Error during image embedding: {str(e)}"
+            self.log(error_msg, "error")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", "error")
             return False
-    
+
     def _load_input_file(self) -> tuple:
         """
         Load and validate the input Excel file.
@@ -274,19 +293,34 @@ class ImageEmbedder:
             self.update_status("Error loading input file")
             return None, [], []
     
-    def _count_total_images(self, df: pd.DataFrame, image_cols: List[str], b64_cols: List[str]) -> int:
+    def _count_total_images(self, df: pd.DataFrame = None, image_cols: List[str] = None, b64_cols: List[str] = None) -> int:
         """Count total number of images to process."""
+        # Use instance variables if parameters not provided
+        if df is None:
+            df = self.df
+        if image_cols is None:
+            image_cols = self.image_columns
+        if b64_cols is None:
+            b64_cols = self.base64_columns
+        
+        if df is None:
+            return 0
+            
         total = 0
         
-        # Count image URLs
+        # Count image URLs - only count non-empty strings
         for col in image_cols:
-            total += df[col].notna().sum()
+            if col in df.columns:
+                # Count only non-empty, non-whitespace strings
+                total += int(df[col].apply(lambda x: pd.notna(x) and str(x).strip() != '').sum())
         
-        # Count base64 images
+        # Count base64 images - only count non-empty strings
         for col in b64_cols:
-            total += df[col].notna().sum()
+            if col in df.columns:
+                # Count only non-empty, non-whitespace strings
+                total += int(df[col].apply(lambda x: pd.notna(x) and str(x).strip() != '').sum())
         
-        return total
+        return total    
     
     def _prepare_workbook(self):
         """Prepare or create the Excel workbook."""
@@ -298,9 +332,19 @@ class ImageEmbedder:
                 wb = openpyxl.load_workbook(output_file)
                 self.log(f"Loaded existing workbook: {output_file}")
             else:
-                # Create new workbook
-                wb = openpyxl.Workbook()
-                self.log(f"Created new workbook: {output_file}")
+                # Create new workbook by copying the input file structure if available
+                input_file = self.config.get('input_file')
+                
+                if input_file and os.path.exists(input_file):
+                    # Copy the input file to output file to preserve all data
+                    import shutil
+                    shutil.copy2(input_file, output_file)
+                    wb = openpyxl.load_workbook(output_file)
+                    self.log(f"Copied input file to create workbook: {output_file}")
+                else:
+                    # Fallback: create empty workbook
+                    wb = openpyxl.Workbook()
+                    self.log(f"Created new workbook: {output_file}")
             
             ws = wb.active
             return wb, ws
@@ -309,7 +353,8 @@ class ImageEmbedder:
             error_msg = f"Error preparing workbook: {str(e)}"
             self.log(error_msg, "error")
             return None, None
-    
+
+
     def _configure_excel_layout(self, ws, image_cols: List[str], b64_cols: List[str]) -> None:
         """Configure Excel row heights and column widths."""
         try:
@@ -321,9 +366,10 @@ class ImageEmbedder:
             all_image_cols = image_cols + b64_cols
             for col_name in all_image_cols:
                 try:
-                    col_idx = list(ws[1]).index(next(cell for cell in ws[1] if cell.value == col_name)) + 1
-                    ws.column_dimensions[get_column_letter(col_idx)].width = self.config['column_width']
-                except (StopIteration, ValueError):
+                    col_idx = self._get_column_index(ws, col_name)
+                    if col_idx:
+                        ws.column_dimensions[get_column_letter(col_idx)].width = self.config['column_width']
+                except Exception:
                     # Column not found, skip
                     continue
             
@@ -390,10 +436,10 @@ class ImageEmbedder:
             if success:
                 self.processed_count += 1
                 self.log(f"Embedded URL image: {image_url}", also_print=False)
+                return True
             else:
                 self.error_count += 1
-            
-            return success
+                return False
             
         except Exception as e:
             self.log(f"Error embedding URL image {image_url}: {str(e)}", "error")
@@ -413,10 +459,10 @@ class ImageEmbedder:
             if success:
                 self.processed_count += 1
                 self.log(f"Embedded base64 image in row {row_idx}, column {col_idx}", also_print=False)
+                return True
             else:
                 self.error_count += 1
-            
-            return success
+                return False
             
         except Exception as e:
             self.log(f"Error embedding base64 image: {str(e)}", "error")

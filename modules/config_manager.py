@@ -423,6 +423,7 @@ class ConfigManager:
         try:
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(self.get_config_summary(), f, indent=2, ensure_ascii=False)
+            print(f"Configuration exported to {file_path}")
             return True
         except Exception as e:
             print(f"Error exporting config: {e}")
@@ -442,6 +443,19 @@ class ConfigManager:
             with open(file_path, 'r', encoding='utf-8') as f:
                 imported_config = json.load(f)
             
+            # Validate imported config has basic structure
+            if not isinstance(imported_config, dict):
+                print("Invalid config structure: not a dictionary")
+                return False
+            
+            # Check if it has at least some expected keys
+            expected_keys = ['api_host', 'request_delay', 'max_image_width']
+            has_expected_keys = any(key in imported_config for key in expected_keys)
+            
+            if not has_expected_keys:
+                print("Invalid config structure: missing expected configuration keys")
+                return False
+            
             # Update current config with imported values
             for key, value in imported_config.items():
                 # Don't import sensitive fields from summary exports
@@ -456,14 +470,16 @@ class ConfigManager:
     def __str__(self) -> str:
         """String representation of configuration."""
         summary = self.get_config_summary()
-        return f"ConfigManager(api_configured={self.is_api_configured()}, items={len(summary)})"
+        return f"ConfigManager(file='{self.config_file}', api_configured={self.is_api_configured()})"
     
     def __repr__(self) -> str:
         """Detailed string representation."""
         return f"ConfigManager(file='{self.config_file}', api_configured={self.is_api_configured()})"
 
 
-# Convenience functions
+# Singleton cache
+_config_manager_instances = {}
+
 def create_default_config(config_file: str = "app_config.json") -> bool:
     """
     Create a default configuration file.
@@ -480,7 +496,7 @@ def create_default_config(config_file: str = "app_config.json") -> bool:
 
 def get_config_manager(config_file: str = "app_config.json") -> ConfigManager:
     """
-    Get a ConfigManager instance (factory function).
+    Get a ConfigManager instance (factory function with caching).
     
     Args:
         config_file: Configuration file name
@@ -488,7 +504,12 @@ def get_config_manager(config_file: str = "app_config.json") -> ConfigManager:
     Returns:
         ConfigManager: ConfigManager instance
     """
-    return ConfigManager(config_file)
+    config_path = str(get_config_path() / config_file)
+    
+    if config_path not in _config_manager_instances:
+        _config_manager_instances[config_path] = ConfigManager(config_file)
+    
+    return _config_manager_instances[config_path]
 
 
 if __name__ == "__main__":

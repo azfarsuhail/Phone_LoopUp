@@ -9,7 +9,7 @@ from pathlib import Path
 
 # Read the contents of README.md
 this_directory = Path(__file__).parent
-long_description = (this_directory / "docs" / "README.md").read_text(encoding='utf-8')
+long_description = (this_directory / "README.md").read_text(encoding='utf-8') if (this_directory / "README.md").exists() else "Phone Lookup Tool"
 
 # Read requirements.txt
 def read_requirements():
@@ -17,7 +17,7 @@ def read_requirements():
     if requirements_file.exists():
         with open(requirements_file, 'r', encoding='utf-8') as f:
             requirements = [line.strip() for line in f 
-                          if line.strip() and not line.startswith('#')]
+                          if line.strip() and not line.startswith('#') and not line.strip() == 'tkinter']
         return requirements
     return []
 
@@ -53,7 +53,6 @@ setup(
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
-        "Operating System :: OS Independent",
         "Operating System :: Microsoft :: Windows",
         "Operating System :: MacOS",
         "Operating System :: POSIX :: Linux",
@@ -63,7 +62,7 @@ setup(
     keywords="phone lookup, excel, image embedding, api, desktop application",
     
     # Packages and Dependencies
-    packages=find_packages(include=["modules", "modules.*"]),
+    packages=find_packages(),
     install_requires=read_requirements(),
     python_requires=">=3.8",
     
@@ -72,52 +71,15 @@ setup(
         "console_scripts": [
             "phone-lookup-tool=main:main",
         ],
-        "gui_scripts": [
-            "phone-lookup-tool-gui=main:main",
-        ],
-    },
-    
-    # Package Data
-    package_data={
-        "modules": ["*.py"],
     },
     
     # Include additional files
     include_package_data=True,
     
-    # Additional files to include
-    data_files=[
-        ("docs", [
-            "docs/README.md",
-            "docs/INSTALL.md", 
-            "docs/USER_GUIDE.md"
-        ]),
-        ("samples", [
-            "samples/sample_numbers.xlsx"
-        ]) if (this_directory / "samples" / "sample_numbers.xlsx").exists() else ("", []),
-        ("", [
-            "requirements.txt",
-            "LICENSE",
-            "config.json"
-        ]),
-    ],
-    
     # Project URLs
     project_urls={
         "Bug Reports": "https://github.com/azfarsuhail/Phone_LoopUp/issues",
         "Source": "https://github.com/azfarsuhail/Phone_LoopUp",
-        "Documentation": "https://github.com/azfarsuhail/Phone_LoopUp/docs",
-    },
-    
-    # License
-    license="MIT",
-    
-    # Additional metadata
-    platforms=["Windows", "macOS", "Linux"],
-    options={
-        "bdist_wheel": {
-            "universal": True
-        }
     },
 )
 
