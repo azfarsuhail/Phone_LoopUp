@@ -28,8 +28,8 @@
 #### Step 1: Download the Source Code
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/PhoneLookupTool.git
-cd PhoneLookupTool
+git clone https://https://github.com/azfarsuhail/Phone_LoopUp.git
+cd Phone_LoopUp
 
 # Or download and extract the ZIP file
 # Then navigate to the extracted directory

@@ -1,0 +1,28 @@
+# =============================================================================
+# Phone Lookup Tool - Python Dependencies
+# =============================================================================
+
+# Data Processing
+pandas>=1.5.0          # Data analysis and manipulation library
+openpyxl>=3.1.0        # Read/write Excel 2010 xlsx/xlsm files
+
+# Network and API
+requests>=2.28.0       # HTTP library for API calls and image downloads
+
+# Image Processing  
+Pillow>=9.0.0          # Image manipulation library (resizing, format conversion)
+
+# Security
+cryptography>=38.0.0   # Encryption for secure configuration storage
+
+# GUI (usually included with Python)
+tkinter              # Standard Python GUI toolkit
+
+# =============================================================================
+# Development Dependencies (commented out - uncomment if needed)
+# =============================================================================
+# pytest>=7.0.0        # Testing framework
+# coverage>=6.0.0      # Code coverage measurement
+# pylint>=2.15.0       # Code linting and static analysis
+# black>=22.0.0        # Code formatter
+# pyinstaller>=5.0.0   # Package as executable
