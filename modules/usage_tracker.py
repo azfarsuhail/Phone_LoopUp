@@ -128,6 +128,185 @@ class UsageTracker:
             self.logger.error(f"Error saving usage data: {e}")
             return False
     
+    # NEW: Manual usage editing methods
+    def set_usage_count(self, count: int, month: str = None) -> bool:
+        """
+        Manually set the usage count for a specific month.
+        
+        Args:
+            count: New usage count value (must be non-negative)
+            month: Month in "YYYY-MM" format (defaults to current month)
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            if count < 0:
+                self.logger.error("Usage count cannot be negative")
+                return False
+            
+            target_month = month or self.current_month
+            
+            # Ensure the target month exists
+            if target_month not in self.usage_data["monthly_usage"]:
+                self.usage_data["monthly_usage"][target_month] = {
+                    "count": 0,
+                    "first_request": datetime.now().isoformat(),
+                    "last_request": None,
+                    "daily_breakdown": {}
+                }
+            
+            # Store the old count for logging
+            old_count = self.usage_data["monthly_usage"][target_month]["count"]
+            
+            # Update the count
+            self.usage_data["monthly_usage"][target_month]["count"] = count
+            self.usage_data["monthly_usage"][target_month]["last_request"] = datetime.now().isoformat()
+            
+            # Update all-time stats
+            self._update_all_time_stats_after_manual_edit(target_month, old_count, count)
+            
+            # Save changes
+            success = self._save_usage_data()
+            if success:
+                self.logger.info(f"Manually set usage count for {target_month}: {old_count} -> {count}")
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"Error setting usage count: {e}")
+            return False
+    
+    def add_usage(self, count: int, month: str = None) -> bool:
+        """
+        Manually add to usage count for a specific month.
+        
+        Args:
+            count: Number to add to current usage (can be negative to subtract)
+            month: Month in "YYYY-MM" format (defaults to current month)
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            target_month = month or self.current_month
+            
+            # Ensure the target month exists
+            if target_month not in self.usage_data["monthly_usage"]:
+                self.usage_data["monthly_usage"][target_month] = {
+                    "count": 0,
+                    "first_request": datetime.now().isoformat(),
+                    "last_request": None,
+                    "daily_breakdown": {}
+                }
+            
+            current_count = self.usage_data["monthly_usage"][target_month]["count"]
+            new_count = current_count + count
+            
+            # Prevent negative counts
+            if new_count < 0:
+                self.logger.warning(f"Cannot set negative usage count. Current: {current_count}, Attempted: {count}")
+                return False
+            
+            # Update the count
+            self.usage_data["monthly_usage"][target_month]["count"] = new_count
+            self.usage_data["monthly_usage"][target_month]["last_request"] = datetime.now().isoformat()
+            
+            # Update all-time stats
+            self._update_all_time_stats_after_manual_edit(target_month, current_count, new_count)
+            
+            # Save changes
+            success = self._save_usage_data()
+            if success:
+                action = "added" if count >= 0 else "subtracted"
+                self.logger.info(f"Manually {action} {abs(count)} to usage for {target_month}. New total: {new_count}")
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"Error adding usage: {e}")
+            return False
+    
+    def _update_all_time_stats_after_manual_edit(self, month: str, old_count: int, new_count: int) -> None:
+        """
+        Update all-time statistics after a manual edit.
+        
+        Args:
+            month: Month that was edited
+            old_count: Previous count for the month
+            new_count: New count for the month
+        """
+        try:
+            # Calculate the difference
+            diff = new_count - old_count
+            
+            # Update total requests
+            self.usage_data["all_time_stats"]["total_requests"] += diff
+            
+            # Ensure total doesn't go negative
+            if self.usage_data["all_time_stats"]["total_requests"] < 0:
+                self.usage_data["all_time_stats"]["total_requests"] = 0
+            
+            # Update last request timestamp
+            self.usage_data["all_time_stats"]["last_request"] = datetime.now().isoformat()
+            
+            # Update first request if this is the first usage
+            if not self.usage_data["all_time_stats"]["first_request"] and new_count > 0:
+                self.usage_data["all_time_stats"]["first_request"] = datetime.now().isoformat()
+                
+        except Exception as e:
+            self.logger.error(f"Error updating all-time stats after manual edit: {e}")
+    
+    def reset_monthly_usage(self, month: str = None) -> bool:
+        """
+        Reset usage for a specific month to zero.
+        
+        Args:
+            month: Month in "YYYY-MM" format (defaults to current month)
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            target_month = month or self.current_month
+            
+            if target_month not in self.usage_data["monthly_usage"]:
+                self.logger.warning(f"Month {target_month} not found in usage data")
+                return False
+            
+            # Store reset history
+            if "reset_history" not in self.usage_data:
+                self.usage_data["reset_history"] = []
+            
+            old_count = self.usage_data["monthly_usage"][target_month]["count"]
+            
+            self.usage_data["reset_history"].append({
+                "month": target_month,
+                "previous_count": old_count,
+                "reset_at": datetime.now().isoformat(),
+                "type": "monthly_reset"
+            })
+            
+            # Reset the month
+            self.usage_data["monthly_usage"][target_month] = {
+                "count": 0,
+                "first_request": datetime.now().isoformat(),
+                "last_request": None,
+                "daily_breakdown": {}
+            }
+            
+            # Update all-time stats
+            self.usage_data["all_time_stats"]["total_requests"] -= old_count
+            if self.usage_data["all_time_stats"]["total_requests"] < 0:
+                self.usage_data["all_time_stats"]["total_requests"] = 0
+            
+            success = self._save_usage_data()
+            if success:
+                self.logger.info(f"Reset usage for {target_month}. Previous count: {old_count}")
+            return success
+            
+        except Exception as e:
+            self.logger.error(f"Error resetting monthly usage: {e}")
+            return False
+
     def increment_usage(self, count: int = 1) -> bool:
         """
         Increment API usage counter for current month.
@@ -210,6 +389,16 @@ class UsageTracker:
             Optional[int]: Usage count for specified month, None if month doesn't exist
         """
         return self.usage_data["monthly_usage"].get(year_month, {}).get("count")
+    
+    def get_available_months(self) -> List[str]:
+        """
+        Get list of all months with usage data.
+        
+        Returns:
+            List[str]: Sorted list of months in "YYYY-MM" format
+        """
+        months = list(self.usage_data["monthly_usage"].keys())
+        return sorted(months)
     
     def get_current_month_daily_breakdown(self) -> Dict[str, int]:
         """
@@ -325,7 +514,8 @@ class UsageTracker:
             "daily_breakdown": self.get_current_month_daily_breakdown(),
             "usage_trend": self.get_usage_trend(6),
             "first_request": self.usage_data["all_time_stats"].get("first_request"),
-            "last_request": self.usage_data["all_time_stats"].get("last_request")
+            "last_request": self.usage_data["all_time_stats"].get("last_request"),
+            "available_months": self.get_available_months()
         }
     
     def reset_current_month(self) -> bool:
@@ -335,35 +525,7 @@ class UsageTracker:
         Returns:
             bool: True if successful
         """
-        try:
-            if self.current_month in self.usage_data["monthly_usage"]:
-                # Store reset history
-                if "reset_history" not in self.usage_data:
-                    self.usage_data["reset_history"] = []
-                
-                self.usage_data["reset_history"].append({
-                    "month": self.current_month,
-                    "previous_count": self.usage_data["monthly_usage"][self.current_month]["count"],
-                    "reset_at": datetime.now().isoformat()
-                })
-                
-                # Reset current month
-                self.usage_data["monthly_usage"][self.current_month] = {
-                    "count": 0,
-                    "first_request": datetime.now().isoformat(),
-                    "last_request": None,
-                    "daily_breakdown": {}
-                }
-                
-                success = self._save_usage_data()
-                if success:
-                    self.logger.info(f"Reset usage counter for {self.current_month}")
-                return success
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"Error resetting current month: {e}")
-            return False
+        return self.reset_monthly_usage(self.current_month)
     
     def reset_all_usage(self) -> bool:
         """
@@ -546,30 +708,86 @@ def get_usage_statistics(storage_file: str = "api_usage.json") -> Dict[str, Any]
     return tracker.get_usage_stats()
 
 
+# NEW: Manual editing convenience functions
+def set_usage_count(count: int, month: str = None, storage_file: str = "api_usage.json") -> bool:
+    """
+    Convenience function to manually set usage count.
+    
+    Args:
+        count: New usage count value
+        month: Month in "YYYY-MM" format (defaults to current month)
+        storage_file: Usage data storage file name
+        
+    Returns:
+        bool: True if successful
+    """
+    tracker = get_usage_tracker(storage_file)
+    return tracker.set_usage_count(count, month)
+
+
+def add_usage_manual(count: int, month: str = None, storage_file: str = "api_usage.json") -> bool:
+    """
+    Convenience function to manually add to usage count.
+    
+    Args:
+        count: Number to add to current usage
+        month: Month in "YYYY-MM" format (defaults to current month)
+        storage_file: Usage data storage file name
+        
+    Returns:
+        bool: True if successful
+    """
+    tracker = get_usage_tracker(storage_file)
+    return tracker.add_usage(count, month)
+
+
+def reset_month_usage(month: str = None, storage_file: str = "api_usage.json") -> bool:
+    """
+    Convenience function to reset monthly usage.
+    
+    Args:
+        month: Month in "YYYY-MM" format (defaults to current month)
+        storage_file: Usage data storage file name
+        
+    Returns:
+        bool: True if successful
+    """
+    tracker = get_usage_tracker(storage_file)
+    return tracker.reset_monthly_usage(month)
+
+
 if __name__ == "__main__":
-    # Test the usage tracker
-    print("Testing UsageTracker...")
+    # Test the usage tracker with manual editing
+    print("Testing UsageTracker with manual editing...")
     
     # Create a test instance
     tracker = UsageTracker("test_usage.json")
     
-    # Test incrementing usage
-    tracker.increment_usage(5)
-    tracker.increment_usage(3)
+    # Test manual editing
+    print(f"Initial usage: {tracker.get_current_month_usage()}")
     
-    # Test getting statistics
-    stats = tracker.get_usage_stats()
-    print(f"Current month usage: {stats['current_month_usage']}")
-    print(f"All time usage: {stats['all_time_usage']}")
-    print(f"Daily average: {stats['daily_average']}")
+    # Test setting usage
+    tracker.set_usage_count(50)
+    print(f"After setting to 50: {tracker.get_current_month_usage()}")
     
-    # Test alerts
-    alerts = tracker.get_usage_alerts(warning_threshold=5, critical_threshold=8)
-    for alert in alerts:
-        print(f"Alert: {alert['level']} - {alert['message']}")
+    # Test adding usage
+    tracker.add_usage(25)
+    print(f"After adding 25: {tracker.get_current_month_usage()}")
+    
+    # Test subtracting usage
+    tracker.add_usage(-10)
+    print(f"After subtracting 10: {tracker.get_current_month_usage()}")
+    
+    # Test reset
+    tracker.reset_current_month()
+    print(f"After reset: {tracker.get_current_month_usage()}")
+    
+    # Test getting available months
+    months = tracker.get_available_months()
+    print(f"Available months: {months}")
     
     # Clean up test file
     if tracker.storage_file.exists():
         tracker.storage_file.unlink()
     
-    print("UsageTracker test completed!")
+    print("UsageTracker manual editing test completed!")

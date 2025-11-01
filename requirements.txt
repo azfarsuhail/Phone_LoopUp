@@ -17,6 +17,7 @@ cryptography>=38.0.0   # Encryption for secure configuration storage
 
 # GUI (usually included with Python)
 # tkinter              # Standard Python GUI toolkit
+customtkinter>=5.0.0  # Modern GUI components for Tkinter
 
 # =============================================================================
 # Development Dependencies (commented out - uncomment if needed)

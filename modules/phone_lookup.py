@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Callable, Any, Tuple
 from pathlib import Path
 import logging
 
-from .usage_tracker import UsageTracker
+from .usage_tracker import get_usage_tracker
 from .path_utils import get_logs_path, get_data_path
 
 
@@ -24,11 +24,16 @@ class PhoneLookup:
         self.is_running = False
         self.config = {}
         self.callbacks = {}
-        self.usage_tracker = UsageTracker()
+        self.usage_tracker = get_usage_tracker()  # Use the global tracker
         self.session = None
         self.current_df = None
         self.processed_count = 0
         self.error_count = 0
+        
+        # Track max columns for dynamic expansion
+        self.max_names = 0
+        self.max_images = 0
+        self.max_base64_images = 0
         
         # Setup module-specific logger
         self.logger = self._setup_logger()
@@ -99,6 +104,11 @@ class PhoneLookup:
             'stop': stop_callback
         }
         
+        # Reset max columns
+        self.max_names = 0
+        self.max_images = 0
+        self.max_base64_images = 0
+        
         # Initialize requests session for connection pooling
         self.session = requests.Session()
         self.session.headers.update({
@@ -149,6 +159,79 @@ class PhoneLookup:
     def get_usage_stats(self) -> Dict[str, Any]:
         """Get current usage statistics."""
         return self.usage_tracker.get_usage_stats()
+    
+    # NEW: Manual usage editing methods that call the usage tracker
+    def set_usage_count(self, count: int, month: str = None) -> bool:
+        """
+        Manually set the usage count.
+        
+        Args:
+            count: New usage count value
+            month: Month in "YYYY-MM" format (defaults to current month)
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            success = self.usage_tracker.set_usage_count(count, month)
+            if success:
+                self.log(f"Manually set usage count to: {count} for month: {month or 'current'}")
+                self.update_usage()
+            return success
+        except Exception as e:
+            self.log(f"Error setting usage count: {str(e)}", "error")
+            return False
+    
+    def add_usage(self, count: int, month: str = None) -> bool:
+        """
+        Manually add to usage count.
+        
+        Args:
+            count: Number to add to current usage
+            month: Month in "YYYY-MM" format (defaults to current month)
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            success = self.usage_tracker.add_usage(count, month)
+            if success:
+                action = "added" if count >= 0 else "subtracted"
+                self.log(f"Manually {action} {abs(count)} to usage for month: {month or 'current'}")
+                self.update_usage()
+            return success
+        except Exception as e:
+            self.log(f"Error adding usage: {str(e)}", "error")
+            return False
+    
+    def reset_usage(self, month: str = None) -> bool:
+        """
+        Reset usage count to zero.
+        
+        Args:
+            month: Month in "YYYY-MM" format (defaults to current month)
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            success = self.usage_tracker.reset_monthly_usage(month)
+            if success:
+                self.log(f"Manually reset usage for month: {month or 'current'}")
+                self.update_usage()
+            return success
+        except Exception as e:
+            self.log(f"Error resetting usage: {str(e)}", "error")
+            return False
+    
+    def get_available_months(self) -> List[str]:
+        """
+        Get list of available months with usage data.
+        
+        Returns:
+            List[str]: Sorted list of months
+        """
+        return self.usage_tracker.get_available_months()
     
     def run(self) -> bool:
         """
@@ -293,13 +376,10 @@ class PhoneLookup:
         """Initialize the results dataframe with required columns."""
         results_df = df.copy()
         
-        # Add result columns
+        # Add basic result columns
         result_columns = [
             'Lookup_Status',
-            'Full_Name',
-            'Other_Names',
-            'Image_URLs',
-            'Base64_Images',
+            'Full_Name',  # This will be Name_1
             'Lookup_Timestamp',
             'Error_Message'
         ]
@@ -308,6 +388,7 @@ class PhoneLookup:
             if col not in results_df.columns:
                 results_df[col] = ""
         
+        # We'll dynamically add Name_X, Image_X, and b64_X columns as we process data
         return results_df
     
     def _process_single_number(self, idx: int, number: str, total_numbers: int) -> None:
@@ -321,11 +402,11 @@ class PhoneLookup:
             # Perform API lookup
             result = self._lookup_phone_number(number)
             
-            # Update results
-            self._update_results(idx, result)
+            # Update results with wide format
+            self._update_results_wide_format(idx, result)
             self.processed_count += 1
             
-            # Update usage counter
+            # Update usage counter - ONLY if the lookup was successful
             if result.get('status') == 'Success':
                 self.usage_tracker.increment_usage(1)
                 self.update_usage()
@@ -559,16 +640,81 @@ class PhoneLookup:
         
         return result
     
-    def _update_results(self, idx: int, result: Dict[str, Any]) -> None:
-        """Update results dataframe with lookup results."""
+    def _update_results_wide_format(self, idx: int, result: Dict[str, Any]) -> None:
+        """Update results dataframe with lookup results in wide format."""
         try:
+            # Update basic fields
             self.current_df.at[idx, 'Lookup_Status'] = result.get('status', 'Unknown')
-            self.current_df.at[idx, 'Full_Name'] = result.get('full_name', '')
-            self.current_df.at[idx, 'Other_Names'] = ' | '.join(result.get('other_names', []))
-            self.current_df.at[idx, 'Image_URLs'] = ' | '.join(result.get('image_urls', []))
-            self.current_df.at[idx, 'Base64_Images'] = ' | '.join(result.get('base64_images', []))
             self.current_df.at[idx, 'Lookup_Timestamp'] = result.get('timestamp', '')
             self.current_df.at[idx, 'Error_Message'] = result.get('error_message', '')
+            
+            # Combine full name with other names for Name_X columns
+            all_names = []
+            full_name = result.get('full_name', '')
+            if full_name:
+                all_names.append(full_name)
+            
+            other_names = result.get('other_names', [])
+            all_names.extend(other_names)
+            
+            # Update max names count
+            current_names_count = len(all_names)
+            if current_names_count > self.max_names:
+                self.max_names = current_names_count
+            
+            # Add/update Name_X columns
+            for i, name in enumerate(all_names, 1):
+                col_name = f'Name_{i}'
+                if col_name not in self.current_df.columns:
+                    # Add new column with empty values for all previous rows
+                    self.current_df[col_name] = ""
+                self.current_df.at[idx, col_name] = name
+            
+            # Fill empty Name_X columns for this row
+            for i in range(current_names_count + 1, self.max_names + 1):
+                col_name = f'Name_{i}'
+                if col_name in self.current_df.columns:
+                    self.current_df.at[idx, col_name] = ""
+            
+            # Handle Image URLs
+            image_urls = result.get('image_urls', [])
+            current_images_count = len(image_urls)
+            if current_images_count > self.max_images:
+                self.max_images = current_images_count
+            
+            # Add/update Image_X columns
+            for i, image_url in enumerate(image_urls, 1):
+                col_name = f'Image_{i}'
+                if col_name not in self.current_df.columns:
+                    self.current_df[col_name] = ""
+                self.current_df.at[idx, col_name] = image_url
+            
+            # Fill empty Image_X columns for this row
+            for i in range(current_images_count + 1, self.max_images + 1):
+                col_name = f'Image_{i}'
+                if col_name in self.current_df.columns:
+                    self.current_df.at[idx, col_name] = ""
+            
+            # Handle Base64 Images
+            base64_images = result.get('base64_images', [])
+            current_b64_count = len(base64_images)
+            if current_b64_count > self.max_base64_images:
+                self.max_base64_images = current_b64_count
+            
+            # Add/update b64_X columns (truncate long base64 strings for display)
+            for i, b64_image in enumerate(base64_images, 1):
+                col_name = f'b64_{i}'
+                if col_name not in self.current_df.columns:
+                    self.current_df[col_name] = ""
+                # Store full base64 string
+                self.current_df.at[idx, col_name] = b64_image
+            
+            # Fill empty b64_X columns for this row
+            for i in range(current_b64_count + 1, self.max_base64_images + 1):
+                col_name = f'b64_{i}'
+                if col_name in self.current_df.columns:
+                    self.current_df.at[idx, col_name] = ""
+                    
         except Exception as e:
             self.log(f"Error updating results for index {idx}: {str(e)}", "error")
     
@@ -586,11 +732,15 @@ class PhoneLookup:
             if 'Cleaned_Number' in save_df.columns:
                 save_df = save_df.drop('Cleaned_Number', axis=1)
             
+            # Ensure consistent column order: Number, Status, Name_X, Image_X, b64_X, Timestamp, Error
+            self._reorder_columns(save_df)
+            
             # Save to Excel
             save_df.to_excel(self.config['output_file'], index=False)
             
             if final:
                 self.log(f"Final results saved to: {self.config['output_file']}")
+                self.log(f"Output format: {self.max_names} name columns, {self.max_images} image columns, {self.max_base64_images} base64 columns")
             else:
                 self.log(f"Progress saved: {len(save_df)} records")
                 
@@ -598,13 +748,40 @@ class PhoneLookup:
             error_msg = f"Error saving results: {str(e)}"
             self.log(error_msg, "error")
     
+    def _reorder_columns(self, df: pd.DataFrame) -> None:
+        """Reorder columns to have consistent structure."""
+        # Get all columns
+        all_columns = list(df.columns)
+        
+        # Define base columns that should come first
+        base_columns = ['Number', 'Lookup_Status']
+        
+        # Extract dynamic columns
+        name_columns = sorted([col for col in all_columns if col.startswith('Name_')], 
+                             key=lambda x: int(x.split('_')[1]))
+        image_columns = sorted([col for col in all_columns if col.startswith('Image_')], 
+                              key=lambda x: int(x.split('_')[1]))
+        b64_columns = sorted([col for col in all_columns if col.startswith('b64_')], 
+                            key=lambda x: int(x.split('_')[1]))
+        
+        # Remaining columns (timestamp, error, etc.)
+        other_columns = [col for col in all_columns if col not in base_columns + 
+                        name_columns + image_columns + b64_columns]
+        
+        # Reorder the dataframe
+        new_order = base_columns + name_columns + image_columns + b64_columns + other_columns
+        df = df[new_order]
+    
     def get_processing_stats(self) -> Dict[str, Any]:
         """Get current processing statistics."""
         return {
             "processed_count": self.processed_count,
             "error_count": self.error_count,
             "is_running": self.is_running,
-            "api_usage": self.usage_tracker.get_usage_stats()
+            "api_usage": self.usage_tracker.get_usage_stats(),
+            "max_names": self.max_names,
+            "max_images": self.max_images,
+            "max_base64_images": self.max_base64_images
         }
     
     def __str__(self) -> str:
